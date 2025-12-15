@@ -14,8 +14,10 @@ from anthropic import Anthropic
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+
 
 class ToolDefinition(TypedDict):
     name: str
@@ -64,7 +66,8 @@ class Configuration:
             ValueError: If the API key is not found in environment variables.
         """
         if not self.api_key:
-            raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
+            raise ValueError(
+                "ANTHROPIC_API_KEY not found in environment variables")
         return self.api_key
 
 
@@ -81,9 +84,11 @@ class Server:
 
     async def initialize(self) -> None:
         """Initialize the server connection."""
-        command = shutil.which("npx") if self.config["command"] == "npx" else self.config["command"]
+        command = shutil.which(
+            "npx") if self.config["command"] == "npx" else self.config["command"]
         if command is None:
-            raise ValueError("The command must be a valid string and cannot be None.")
+            raise ValueError(
+                "The command must be a valid string and cannot be None.")
 
         # complete params
         server_params = StdioServerParameters()
@@ -142,20 +147,21 @@ class Server:
                 self.session = None
                 self.stdio_context = None
             except Exception as e:
-                logging.error(f"Error during cleanup of server {self.name}: {e}")
+                logging.error(
+                    f"Error during cleanup of server {self.name}: {e}")
 
 
 class DataExtractor:
     """Handles extraction and storage of structured data from LLM responses."""
-    
+
     def __init__(self, sqlite_server: Server, anthropic_client: Anthropic):
         self.sqlite_server = sqlite_server
         self.anthropic = anthropic_client
-        
+
     async def setup_data_tables(self) -> None:
         """Setup tables for storing extracted data."""
         try:
-            
+
             await self.sqlite_server.execute_tool("write_query", {
                 "query": """
                 CREATE TABLE IF NOT EXISTS pricing_plans (
@@ -173,9 +179,9 @@ class DataExtractor:
                 )
                 """
             })
-            
+
             logging.info("✓ Data extraction tables initialized")
-            
+
         except Exception as e:
             logging.error(f"Failed to setup data tables: {e}")
 
@@ -187,22 +193,22 @@ class DataExtractor:
                 model='claude-sonnet-4-5-20250929',
                 messages=[{'role': 'user', 'content': prompt}]
             )
-            
+
             text_content = ""
             for content in response.content:
                 if content.type == 'text':
                     text_content += content.text
-            
+
             return text_content.strip()
-            
+
         except Exception as e:
             logging.error(f"Error in structured extraction: {e}")
             return '{"error": "extraction failed"}'
-    
-    async def extract_and_store_data(self, user_query: str, llm_response: str, 
-                                   source_url: str = None) -> None:
+
+    async def extract_and_store_data(self, user_query: str, llm_response: str,
+                                     source_url: str = None) -> None:
         """Extract structured data from LLM response and store it."""
-        try:            
+        try:
             extraction_prompt = f"""
             Analyze this text and extract pricing information in JSON format:
             
@@ -227,16 +233,18 @@ class DataExtractor:
             
             Return only valid JSON, no other text. Do not return your response enclosed in ```json```
             """
-            
+
             extraction_response = await self._get_structured_extraction(extraction_prompt)
-            extraction_response = extraction_response.replace("```json\n", "").replace("```", "")
+            extraction_response = extraction_response.replace(
+                "```json\n", "").replace("```", "")
             pricing_data = json.loads(extraction_response)
-            
+
             for plan in pricing_data.get("plans", []):
                 # complete
-            
-            logger.info(f"Stored {len(pricing_data.get('plans', []))} pricing plans")
-            
+
+            logger.info(
+                f"Stored {len(pricing_data.get('plans', []))} pricing plans")
+
         except Exception as e:
             logging.error(f"Error extracting pricing data: {e}")
 
@@ -265,15 +273,15 @@ class ChatSession:
         messages = [{'role': 'user', 'content': query}]
         response = self.anthropic.messages.create(
             max_tokens=2024,
-            model='<ENTER_MODEL_NAME>', 
+            model='<ENTER_MODEL_NAME>',
             tools=self.available_tools,
             messages=messages
         )
-        
+
         full_response = ""
-        source_url = None
+        source_url = None  # https://claude.vocareum.com
         used_web_search = False
-        
+
         process_query = True
         while process_query:
             assistant_content = []
@@ -282,7 +290,7 @@ class ChatSession:
                     # complete
                 elif content.type == 'tool_use':
                     # complete
-        
+
         if self.data_extractor and full_response.strip():
             await self.data_extractor.extract_and_store_data(query, full_response.strip(), source_url)
 
@@ -296,20 +304,20 @@ class ChatSession:
         """Run an interactive chat loop."""
         print("\nMCP Chatbot with Data Extraction Started!")
         print("Type your queries, 'show data' to view stored data, or 'quit' to exit.")
-        
+
         while True:
             try:
                 query = input("\nQuery: ").strip()
-        
+
                 if query.lower() == 'quit':
                     break
                 elif query.lower() == 'show data':
                     await self.show_stored_data()
                     continue
-                    
+
                 await self.process_query(query)
                 print("\n")
-                    
+
             except KeyboardInterrupt:
                 print("\nExiting...")
                 break
@@ -321,7 +329,7 @@ class ChatSession:
         if not self.sqlite_server:
             logger.info("No database available")
             return
-            
+
         try:
             # complete
         except Exception as e:
@@ -347,10 +355,12 @@ class ChatSession:
                     self.tool_to_server[tool["name"]] = server.name
 
             print(f"\nConnected to {len(self.servers)} server(s)")
-            print(f"Available tools: {[tool['name'] for tool in self.available_tools]}")
-            
+            print(
+                f"Available tools: {[tool['name'] for tool in self.available_tools]}")
+
             if self.sqlite_server:
-                self.data_extractor = DataExtractor(self.sqlite_server, self.anthropic)
+                self.data_extractor = DataExtractor(
+                    self.sqlite_server, self.anthropic)
                 await self.data_extractor.setup_data_tables()
                 print("Data extraction enabled")
 
@@ -363,13 +373,14 @@ class ChatSession:
 async def main() -> None:
     """Initialize and run the chat session."""
     config = Configuration()
-    
+
     script_dir = Path(__file__).parent
     config_file = script_dir / "server_config.json"
-    
+
     server_config = config.load_config(config_file)
-    
-    servers = [Server(name, srv_config) for name, srv_config in server_config["mcpServers"].items()]
+
+    servers = [Server(name, srv_config)
+               for name, srv_config in server_config["mcpServers"].items()]
     chat_session = ChatSession(servers, config.anthropic_api_key)
     await chat_session.start()
 

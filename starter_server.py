@@ -23,6 +23,7 @@ SCRAPE_DIR = "scraped_content"
 
 mcp = FastMCP("llm_inference")
 
+
 @mcp.tool()
 def scrape_websites(
     websites: Dict[str, str],
@@ -31,26 +32,27 @@ def scrape_websites(
 ) -> List[str]:
     """
     Scrape multiple websites using Firecrawl and store their content.
-    
+
     Args:
         websites: Dictionary of provider_name -> URL mappings
         formats: List of formats to scrape ['markdown', 'html'] (default: both)
         api_key: Firecrawl API key (if None, expects environment variable)
-        
+
     Returns:
         List of provider names for successfully scraped websites
     """
-    
+
     if api_key is None:
         api_key = os.getenv('FIRECRAWL_API_KEY')
         if not api_key:
-            raise ValueError("API key must be provided or set as FIRECRAWL_API_KEY environment variable")
-    
+            raise ValueError(
+                "API key must be provided or set as FIRECRAWL_API_KEY environment variable")
+
     app = FirecrawlApp(api_key=api_key)
-    
+
     path = os.path.join(SCRAPE_DIR)
     os.makedirs(path, exist_ok=True)
-    
+
     # save the scraped content to files and then create scraped_metadata.json as a summary file
     # check if the provider has already been scraped and decide if you want to overwrite
     # {
@@ -74,20 +76,21 @@ def scrape_websites(
     # }
     metadata_file = os.path.join(path, "scraped_metadata.json")
 
-    # continue your solution here ...
+    # load existing metadata
+
 
 @mcp.tool()
 def extract_scraped_info(identifier: str) -> str:
     """
     Extract information about a scraped website.
-    
+
     Args:
         identifier: The provider name, full URL, or domain to look for
-        
+
     Returns:
         Formatted JSON string with the scraped information
     """
-    
+
     logger.info(f"Extracting information for identifier: {identifier}")
     logger.info(f"Files in {SCRAPE_DIR}: {os.listdir(SCRAPE_DIR)}")
 
@@ -95,6 +98,7 @@ def extract_scraped_info(identifier: str) -> str:
     logger.info(f"Checking metadata file: {metadata_file}")
 
     # contine your response here ...
+
 
 if __name__ == "__main__":
     mcp.run(transport="stdio")
