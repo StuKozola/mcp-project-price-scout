@@ -1,5 +1,6 @@
 import asyncio
 import json
+from json import tool
 import logging
 import os
 import shutil
@@ -8,6 +9,7 @@ from typing import Any, List, Dict, TypedDict
 from datetime import datetime, timedelta
 from pathlib import Path
 import re
+from unittest import result
 
 from dotenv import load_dotenv
 from anthropic import Anthropic
@@ -53,7 +55,24 @@ class Configuration:
             JSONDecodeError: If configuration file is invalid JSON.
             ValueError: If configuration file is missing required fields.
         """
-        # complete
+
+        # Implement the logic to open and read the file_path.
+        #   Load the JSON: config = json.load(f).
+        #   Add error handling(the try ...except block is provided).
+        #   Check if mcpServers is in the config: if "mcpServers" not in config: ...
+        #   Return the config.
+
+        with open(file_path, "r") as f:
+            config = json.load(f)
+
+        try:
+            if "mmcpServers" not in config:
+                raise ValueError(
+                    "Configuration file is missing required fields")
+        except Exception as e:
+            logging.error(f"Error loading configuration file: {e}")
+            raise e
+        return config
 
     @property
     def anthropic_api_key(self) -> str:
@@ -91,7 +110,13 @@ class Server:
                 "The command must be a valid string and cannot be None.")
 
         # complete params
-        server_params = StdioServerParameters()
+        server_params = StdioServerParameters(
+            command=command,
+            args=self.config["args"],
+            env={**os.environ, **
+                 self.config.get("env", {})} if self.config.get("env") else None
+        )
+
         try:
             stdio_transport = await self.exit_stack.enter_async_context(stdio_client(server_params))
             read, write = stdio_transport
@@ -113,7 +138,23 @@ class Server:
         Raises:
             RuntimeError: If the server is not initialized.
         """
-        # complete
+        # check if the session eists
+        if not self.session:
+            raise RuntimeError(f"Server {self.name} is not initialized")
+
+        # call the session to get tools:
+        tools_response = await self.session.list_tools()
+
+        # Format the response.
+        tool_defs: List[ToolDefinition] = []
+        for tool in tools_response.tools:
+            tool_def = ToolDefinition(
+                name=tool.name,
+                description=tool.description or "",
+                input_schema=tool.inputSchema
+            )
+            tool_defs.append(tool_def)
+        return tool_defs
 
     async def execute_tool(
         self,
@@ -121,23 +162,34 @@ class Server:
         arguments: dict[str, Any],
         retries: int = 2,
         delay: float = 1.0,
-    ) -> Any:
+        ) -> Any:
         """Execute a tool with retry mechanism.
 
-        Args:
-            tool_name: Name of the tool to execute.
-            arguments: Tool arguments.
-            retries: Number of retry attempts.
-            delay: Delay between retries in seconds.
+            Args:
+                tool_name: Name of the tool to execute.
+                arguments: Tool arguments.
+                retries: Number of retry attempts.
+                delay: Delay between retries in seconds.
 
-        Returns:
-            Tool execution result.
+            Returns:
+                Tool execution result.
 
-        Raises:
-            RuntimeError: If server is not initialized.
-            Exception: If tool execution fails after all retries.
-        """
-        # complete
+            Raises:
+                RuntimeError: If server is not initialized.
+                Exception: If tool execution fails after all retries.
+            """
+        # Implement the retry loop
+        try:
+            logging.info(f"Executing {tool_name}...")
+            result = await self.session.call_tool(name=tool_name, arguments=arguments, read_timeout_seconds=timedelta(seconds=60))
+            return result
+        except Exception as e:
+            logging.error(f"Error executing tool {tool_name}: {e}")
+            if retries > 0:
+                await asyncio.sleep(delay)
+                return await self.execute_tool(tool_name, arguments, retries - 1, delay)
+            else:
+                raise e
 
     async def cleanup(self) -> None:
         """Clean up server resources."""
@@ -148,7 +200,7 @@ class Server:
                 self.stdio_context = None
             except Exception as e:
                 logging.error(
-                    f"Error during cleanup of server {self.name}: {e}")
+                        f"Error during cleanup of server {self.name}: {e}")
 
 
 class DataExtractor:
@@ -197,7 +249,7 @@ class DataExtractor:
             text_content = ""
             for content in response.content:
                 if content.type == 'text':
-                    text_content += content.text
+                text_content += content.text
 
             return text_content.strip()
 
@@ -206,14 +258,14 @@ class DataExtractor:
             return '{"error": "extraction failed"}'
 
     async def extract_and_store_data(self, user_query: str, llm_response: str,
-                                     source_url: str = None) -> None:
-        """Extract structured data from LLM response and store it."""
-        try:
-            extraction_prompt = f"""
+                                    source_url: str = None) -> None:
+                                     """Extract structured data from LLM response and store it."""
+                                     try:
+                                     extraction_prompt = f"""
             Analyze this text and extract pricing information in JSON format:
-            
+
             Text: {llm_response}
-            
+
             Extract pricing plans with this structure:
             {{
                 "company_name": "company name",
@@ -230,160 +282,159 @@ class DataExtractor:
                     }}
                 ]
             }}
-            
+
             Return only valid JSON, no other text. Do not return your response enclosed in ```json```
             """
 
             extraction_response = await self._get_structured_extraction(extraction_prompt)
             extraction_response = extraction_response.replace(
                 "```json\n", "").replace("```", "")
-            pricing_data = json.loads(extraction_response)
+                pricing_data = json.loads(extraction_response)
 
-            for plan in pricing_data.get("plans", []):
+                for plan in pricing_data.get("plans", []):
                 # complete
 
-            logger.info(
+                logger.info(
                 f"Stored {len(pricing_data.get('plans', []))} pricing plans")
 
-        except Exception as e:
-            logging.error(f"Error extracting pricing data: {e}")
+                except Exception as e:
+                logging.error(f"Error extracting pricing data: {e}")
 
+                class ChatSession:
+                """Orchestrates the interaction between user, LLM, and tools."""
 
-class ChatSession:
-    """Orchestrates the interaction between user, LLM, and tools."""
+                def __init__(self, servers: list[Server], api_key: str) -> None:
+                self.servers: list[Server] = servers
+                self.anthropic = Anthropic(api_key=api_key)
+                self.available_tools: List[ToolDefinition] = []
+                self.tool_to_server: Dict[str, str] = {}
+                self.sqlite_server: Server | None = None
+                self.data_extractor: DataExtractor | None = None
 
-    def __init__(self, servers: list[Server], api_key: str) -> None:
-        self.servers: list[Server] = servers
-        self.anthropic = Anthropic(api_key=api_key)
-        self.available_tools: List[ToolDefinition] = []
-        self.tool_to_server: Dict[str, str] = {}
-        self.sqlite_server: Server | None = None
-        self.data_extractor: DataExtractor | None = None
-
-    async def cleanup_servers(self) -> None:
-        """Clean up all servers properly."""
-        for server in reversed(self.servers):
-            try:
+                async def cleanup_servers(self) -> None:
+                """Clean up all servers properly."""
+                for server in reversed(self.servers):
+                try:
                 await server.cleanup()
-            except Exception as e:
+                except Exception as e:
                 logging.warning(f"Warning during final cleanup: {e}")
 
-    async def process_query(self, query: str) -> None:
-        """Process a user query and extract/store relevant data."""
-        messages = [{'role': 'user', 'content': query}]
-        response = self.anthropic.messages.create(
+                async def process_query(self, query: str) -> None:
+                """Process a user query and extract/store relevant data."""
+                messages = [{'role': 'user', 'content': query}]
+                response = self.anthropic.messages.create(
             max_tokens=2024,
             model='<ENTER_MODEL_NAME>',
             tools=self.available_tools,
             messages=messages
         )
 
-        full_response = ""
-        source_url = None  # https://claude.vocareum.com
-        used_web_search = False
+            full_response = ""
+            source_url = None  # https://claude.vocareum.com
+            used_web_search = False
 
-        process_query = True
-        while process_query:
-            assistant_content = []
+            process_query = True
+            while process_query:
+        assistant_content = []
             for content in response.content:
-                if content.type == 'text':
+        if content.type == 'text':
                     # complete
                 elif content.type == 'tool_use':
                     # complete
 
-        if self.data_extractor and full_response.strip():
-            await self.data_extractor.extract_and_store_data(query, full_response.strip(), source_url)
+            if self.data_extractor and full_response.strip():
+        await self.data_extractor.extract_and_store_data(query, full_response.strip(), source_url)
 
-    def _extract_url_from_result(self, result_text: str) -> str | None:
+        def _extract_url_from_result(self, result_text: str) -> str | None:
         """Extract URL from tool result."""
-        url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+'
-        urls = re.findall(url_pattern, result_text)
+        url_pattern= r'https?://[^\s<>"{}|\\^`\[\]]+'
+        urls= re.findall(url_pattern, result_text)
         return urls[0] if urls else None
 
-    async def chat_loop(self) -> None:
+        async def chat_loop(self) -> None:
         """Run an interactive chat loop."""
         print("\nMCP Chatbot with Data Extraction Started!")
         print("Type your queries, 'show data' to view stored data, or 'quit' to exit.")
 
         while True:
-            try:
-                query = input("\nQuery: ").strip()
+        try:
+        query = input("\nQuery: ").strip()
 
                 if query.lower() == 'quit':
-                    break
+        break
                 elif query.lower() == 'show data':
-                    await self.show_stored_data()
+        await self.show_stored_data()
                     continue
 
                 await self.process_query(query)
                 print("\n")
 
             except KeyboardInterrupt:
-                print("\nExiting...")
+        print("\nExiting...")
                 break
             except Exception as e:
-                print(f"\nError: {str(e)}")
+        print(f"\nError: {str(e)}")
 
-    async def show_stored_data(self) -> None:
+        async def show_stored_data(self) -> None:
         """Show recently stored data."""
         if not self.sqlite_server:
-            logger.info("No database available")
+        logger.info("No database available")
             return
 
         try:
             # complete
         except Exception as e:
-            print(f"Error showing data: {e}")
+        print(f"Error showing data: {e}")
 
-    async def start(self) -> None:
+        async def start(self) -> None:
         """Main chat session handler."""
         try:
-            for server in self.servers:
-                try:
-                    await server.initialize()
+        for server in self.servers:
+        try:
+        await server.initialize()
                     if "sqlite" in server.name.lower():
-                        self.sqlite_server = server
+        self.sqlite_server = server
                 except Exception as e:
-                    logging.error(f"Failed to initialize server: {e}")
+        logging.error(f"Failed to initialize server: {e}")
                     await self.cleanup_servers()
                     return
 
             for server in self.servers:
-                tools = await server.list_tools()
+        tools = await server.list_tools()
                 self.available_tools.extend(tools)
                 for tool in tools:
-                    self.tool_to_server[tool["name"]] = server.name
+        self.tool_to_server[tool["name"]] = server.name
 
             print(f"\nConnected to {len(self.servers)} server(s)")
             print(
-                f"Available tools: {[tool['name'] for tool in self.available_tools]}")
+               f"Available tools: {[tool['name'] for tool in self.available_tools]}")
 
-            if self.sqlite_server:
-                self.data_extractor = DataExtractor(
-                    self.sqlite_server, self.anthropic)
-                await self.data_extractor.setup_data_tables()
-                print("Data extraction enabled")
+                if self.sqlite_server:
+                self.data_extractor= DataExtractor(
+                   self.sqlite_server, self.anthropic)
+                    await self.data_extractor.setup_data_tables()
+                    print("Data extraction enabled")
 
-            await self.chat_loop()
+                    await self.chat_loop()
 
-        finally:
-            await self.cleanup_servers()
+                    finally:
+                    await self.cleanup_servers()
 
 
-async def main() -> None:
+                    async def main() -> None:
     """Initialize and run the chat session."""
-    config = Configuration()
+    config= Configuration()
 
-    script_dir = Path(__file__).parent
-    config_file = script_dir / "server_config.json"
+    script_dir= Path(__file__).parent
+    config_file= script_dir / "server_config.json"
 
-    server_config = config.load_config(config_file)
+    server_config= config.load_config(config_file)
 
-    servers = [Server(name, srv_config)
+    servers= [Server(name, srv_config)
                for name, srv_config in server_config["mcpServers"].items()]
-    chat_session = ChatSession(servers, config.anthropic_api_key)
-    await chat_session.start()
+               chat_session = ChatSession(servers, config.anthropic_api_key)
+               await chat_session.start()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+        asyncio.run(main())

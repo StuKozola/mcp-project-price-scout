@@ -3,7 +3,7 @@ from importlib.metadata import metadata
 import os
 import json
 import logging
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, cast, Any
 from firecrawl import FirecrawlApp
 from urllib.parse import urlparse
 from datetime import datetime
@@ -92,6 +92,13 @@ def scrape_websites(
     # Loop Through Websites: Iterate over the websites dictionary
     # (which contains provider_name -> url pairs).
     for provider_name, url in websites.items():
+        # Parse the URL to get the domain (before try block to ensure it's always defined)
+        parsed_url = urlparse(url)
+        domain = parsed_url.netloc
+
+        content_files = {}
+        content = None
+
         try:
             # start scraping the website
             logger.info(f"Starting to scrape {provider_name} from {url}")
@@ -102,12 +109,8 @@ def scrape_websites(
                     f"Provider {provider_name} has already been scraped. Skipping.")
                 continue
 
-            # Parse the URL to get the domain
-            parsed_url = urlparse(url)
-            domain = parsed_url.netloc
-
             # Scrape the website
-            content = app.scrape(url, formats=formats)
+            content = app.scrape(url, formats=cast(Any, formats))
             scrape_result = content.model_dump()
 
             # If successful, save the content to files
@@ -118,7 +121,7 @@ def scrape_websites(
                     file_path = os.path.join(
                         path, f"{provider_name}_{format}.txt")
                     with open(file_path, 'w') as file:
-                        file.write(content[format])
+                        file.write(scrape_result.get(format, ''))
                     content_files[format] = file_path
             else:
                 logger.error(f"Failed to scrape {provider_name}")
@@ -130,21 +133,22 @@ def scrape_websites(
             continue
 
         finally:
-            # Update the metadata
-            scraped_metadata[provider_name] = {
-                "provider_name": provider_name,
-                "url": url,
-                "domain": domain,
-                "scraped_at": datetime.now().isoformat(),
-                "formats": formats,
-                "success": True,
-                "content_files": content_files,
-                "title": content.get("title", "No title available"),
-                "description": content.get("description", "No description available")
-            }
+            # Update the metadata only if content was successfully scraped
+            if content is not None:
+                scraped_metadata[provider_name] = {
+                    "provider_name": provider_name,
+                    "url": url,
+                    "domain": domain,
+                    "scraped_at": datetime.now().isoformat(),
+                    "formats": formats,
+                    "success": True,
+                    "content_files": content_files,
+                    "title": getattr(content, "title", "No title available"),
+                    "description": getattr(content, "description", "No description available")
+                }
 
-            # Add the provider name to the list of successful scrapes
-            successful_scrapes.append(provider_name)
+                # Add the provider name to the list of successful scrapes
+                successful_scrapes.append(provider_name)
 
     # Write the entire scraped_metadata dictionary back to the scraped_metadata.json file.
     with open(metadata_file, 'w') as file:
@@ -209,10 +213,11 @@ def extract_scraped_info(identifier: str) -> str:
                     # and store it in result['content'][format_type].
                     with open(file_path, 'r') as file:
                         result['content'][format_type] = file.read()
-            return json.dumps(result, indent=2)
+
+                    return json.dumps(result, indent=2)
+    
         #  If the loop finishes with no match or if you hit an error (like FileNotFoundError),
         #  return a string message like
-
         return json.dumps({"error": f"There is no saved information realted to identifier '{identifier}'."})
 
 
