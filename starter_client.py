@@ -4,13 +4,14 @@ import logging
 import os
 import shutil
 from contextlib import AsyncExitStack
-from typing import Any, List, Dict, TypedDict
+from typing import Any, List, Dict, TypedDict, cast
 from datetime import datetime, timedelta
 from pathlib import Path
 import re
 
 from dotenv import load_dotenv
 from anthropic import Anthropic
+from anthropic.types import MessageParam
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -142,11 +143,11 @@ class Server:
         tools_response = await self.session.list_tools()
         # Format the response. The starter code provides the loop; you just need to populate the tool_def dictionary
         tool_def: List[ToolDefinition] = []
-        for tool in tools_response:
+        for tool in tools_response.tools:
             tool_def.append({
                 "name": tool.name,
-                "description": tool.description,
-                "input_schema": tool.input_schema
+                "description": tool.description or "",
+                "input_schema": tool.inputSchema
             })
         return tool_def
 
@@ -173,6 +174,9 @@ class Server:
             Exception: If tool execution fails after all retries.
         """
         # ipmlement the retry loop
+        if not self.session:
+            raise RuntimeError(
+                f"Server {self.name} is not initialized. Cannot execute tool.")
         try:
             logging.info(f"Executing {tool_name}...")
             result = await self.session.call_tool(name=tool_name, arguments=arguments, read_timeout_seconds=timedelta(seconds=60))
@@ -255,7 +259,7 @@ class DataExtractor:
             return '{"error": "extraction failed"}'
 
     async def extract_and_store_data(self, user_query: str, llm_response: str,
-                                     source_url: str = None) -> None:
+                                     source_url: str = "") -> None:
         """Extract structured data from LLM response and store it."""
         try:
             extraction_prompt = f"""
@@ -317,7 +321,8 @@ class ChatSession:
 
     def __init__(self, servers: list[Server], api_key: str) -> None:
         self.servers: list[Server] = servers
-        self.anthropic = Anthropic(api_key=api_key)
+        self.anthropic = Anthropic(
+            api_key=api_key, base_url="https://claude.vocareum.com")
         self.available_tools: List[ToolDefinition] = []
         self.tool_to_server: Dict[str, str] = {}
         self.sqlite_server: Server | None = None
@@ -333,11 +338,10 @@ class ChatSession:
 
     async def process_query(self, query: str) -> None:
         """Process a user query and extract/store relevant data."""
-        messages = [{'role': 'user', 'content': query}]
+        messages: List[MessageParam] = [{'role': 'user', 'content': query}]
         response = self.anthropic.messages.create(
-            max_tokens=2024,
+            max_tokens=1024,
             model='claude-sonnet-4-5-20250929',
-            tools=self.available_tools,
             messages=messages
         )
 
@@ -360,15 +364,13 @@ class ChatSession:
                 elif content.type == 'tool_use':
                     # append the tool user request to assistant_content and then to messages
                     assistant_content.append(content)
-                    messages.append({
+                    messages.append(cast(MessageParam, {
                         'role': 'assistant',
-                        'content': assistant_content,
-                        'tool_use': content.tool_use
-                    })
+                        'content': assistant_content
+                    }))
                     # get the tool id, args and name from the content
-                    tool_use = content.tool_use
-                    tool_name = tool_use.tool_id
-                    tool_args = tool_use.arguments
+                    tool_name = content.name
+                    tool_args = content.input
                     # find the server for the tool
                     server_name = self.tool_to_server.get(tool_name)
                     if not server_name:
@@ -382,15 +384,20 @@ class ChatSession:
                     # execute the tool
                     tool_result = await server.execute_tool(tool_name, tool_args)
                     # append the tool result to messages
-                    messages.append({
-                        'role': 'tool',
-                        'name': tool_name,
-                        'content': tool_result})
+                    messages.append(cast(MessageParam, {
+                        'role': 'user',
+                        'content': [
+                            {
+                                'type': 'tool_result',
+                                'tool_use_id': content.id,
+                                'content': str(tool_result)
+                            }
+                        ]
+                    }))
                     # call the anthropic client again with updated messages
                     response = self.anthropic.messages.create(
                         max_tokens=2024,
                         model='claude-sonnet-4-5-20250929',
-                        tools=self.available_tools,
                         messages=messages
                     )
                     # check if the new respons is just text, and if so, stop the loop
@@ -398,7 +405,7 @@ class ChatSession:
                         process_query = False
 
         if self.data_extractor and full_response.strip():
-            await self.data_extractor.extract_and_store_data(query, full_response.strip(), source_url)
+            await self.data_extractor.extract_and_store_data(query, full_response.strip(), source_url or "")
 
     def _extract_url_from_result(self, result_text: str) -> str | None:
         """Extract URL from tool result."""
