@@ -5,6 +5,7 @@ This script provides interactive tests and examples for testing the MCP server m
 Run this script to test the server functions directly without pytest.
 """
 
+from starter_server import scrape_websites, extract_scraped_info, SCRAPE_DIR
 import os
 import json
 import sys
@@ -12,8 +13,6 @@ from pathlib import Path
 
 # Add the project directory to the path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
-from starter_server import scrape_websites, extract_scraped_info, SCRAPE_DIR
 
 
 def print_section(title: str):
@@ -105,8 +104,10 @@ def test_extract_existing_data():
             if "error" in result_data:
                 print(f"   ✗ Error: {result_data['error']}")
             else:
-                print(f"   ✓ Success! Retrieved data for: {result_data.get('provider_name')}")
-                print(f"   Content preview: {str(result_data.get('content', {}))[:100]}...")
+                print(
+                    f"   ✓ Success! Retrieved data for: {result_data.get('provider_name')}")
+                print(
+                    f"   Content preview: {str(result_data.get('content', {}))[:100]}...")
 
             # Extract by URL
             url = first_data.get('url')
@@ -117,7 +118,8 @@ def test_extract_existing_data():
                 if "error" in result_data:
                     print(f"   ✗ Error: {result_data['error']}")
                 else:
-                    print(f"   ✓ Success! Retrieved data for: {result_data.get('provider_name')}")
+                    print(
+                        f"   ✓ Success! Retrieved data for: {result_data.get('provider_name')}")
 
             # Extract by domain
             domain = first_data.get('domain')
@@ -128,7 +130,8 @@ def test_extract_existing_data():
                 if "error" in result_data:
                     print(f"   ✗ Error: {result_data['error']}")
                 else:
-                    print(f"   ✓ Success! Retrieved data for: {result_data.get('provider_name')}")
+                    print(
+                        f"   ✓ Success! Retrieved data for: {result_data.get('provider_name')}")
 
             # Test non-existent identifier
             print(f"\n4. Extract non-existent identifier: 'nonexistent'")
@@ -166,7 +169,8 @@ def test_metadata_structure():
 
         for provider_name, data in metadata.items():
             print(f"Validating: {provider_name}")
-            missing_fields = [field for field in required_fields if field not in data]
+            missing_fields = [
+                field for field in required_fields if field not in data]
 
             if missing_fields:
                 print(f"  ✗ Missing fields: {', '.join(missing_fields)}")

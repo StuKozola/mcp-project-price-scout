@@ -102,11 +102,13 @@ class TestScrapeWebsites:
             mock_app.scrape.assert_called_once()
 
             # Verify metadata file was created
-            metadata_file = os.path.join(temp_scrape_dir, "scraped_metadata.json")
+            metadata_file = os.path.join(
+                temp_scrape_dir, "scraped_metadata.json")
             assert os.path.exists(metadata_file)
 
             # Verify content files were created
-            markdown_file = os.path.join(temp_scrape_dir, "test_provider_markdown.txt")
+            markdown_file = os.path.join(
+                temp_scrape_dir, "test_provider_markdown.txt")
             html_file = os.path.join(temp_scrape_dir, "test_provider_html.txt")
             assert os.path.exists(markdown_file)
             assert os.path.exists(html_file)
@@ -166,7 +168,7 @@ class TestScrapeWebsites:
         websites = {"test_provider": "https://example.com"}
 
         with patch('starter_server.FirecrawlApp') as mock_firecrawl, \
-             patch.dict(os.environ, {'FIRECRAWL_API_KEY': 'env_api_key'}):
+                patch.dict(os.environ, {'FIRECRAWL_API_KEY': 'env_api_key'}):
             mock_app = Mock()
             mock_app.scrape.return_value = mock_firecrawl_response
             mock_firecrawl.return_value = mock_app
@@ -224,11 +226,13 @@ class TestScrapeWebsites:
             mock_app.scrape.return_value = mock_firecrawl_response
             mock_firecrawl.return_value = mock_app
 
-            result = scrape_websites(websites, formats=['markdown'], api_key="test_api_key")
+            result = scrape_websites(
+                websites, formats=['markdown'], api_key="test_api_key")
 
             assert len(result) == 1
             # Verify only markdown file was created
-            markdown_file = os.path.join(temp_scrape_dir, "test_provider_markdown.txt")
+            markdown_file = os.path.join(
+                temp_scrape_dir, "test_provider_markdown.txt")
             assert os.path.exists(markdown_file)
 
     def test_scrape_websites_metadata_structure(self, temp_scrape_dir, mock_firecrawl_response):
@@ -242,7 +246,8 @@ class TestScrapeWebsites:
 
             scrape_websites(websites, api_key="test_api_key")
 
-            metadata_file = os.path.join(temp_scrape_dir, "scraped_metadata.json")
+            metadata_file = os.path.join(
+                temp_scrape_dir, "scraped_metadata.json")
             with open(metadata_file, 'r') as f:
                 metadata = json.load(f)
 
@@ -271,7 +276,8 @@ class TestExtractScrapedInfo:
             json.dump(sample_metadata, f)
 
         # Create content files
-        markdown_file = os.path.join(temp_scrape_dir, "test_provider_markdown.txt")
+        markdown_file = os.path.join(
+            temp_scrape_dir, "test_provider_markdown.txt")
         html_file = os.path.join(temp_scrape_dir, "test_provider_html.txt")
         with open(markdown_file, 'w') as f:
             f.write("# Test Markdown Content")
@@ -293,7 +299,8 @@ class TestExtractScrapedInfo:
         with open(metadata_file, 'w') as f:
             json.dump(sample_metadata, f)
 
-        markdown_file = os.path.join(temp_scrape_dir, "test_provider_markdown.txt")
+        markdown_file = os.path.join(
+            temp_scrape_dir, "test_provider_markdown.txt")
         html_file = os.path.join(temp_scrape_dir, "test_provider_html.txt")
         with open(markdown_file, 'w') as f:
             f.write("# Test Content")
@@ -312,7 +319,8 @@ class TestExtractScrapedInfo:
         with open(metadata_file, 'w') as f:
             json.dump(sample_metadata, f)
 
-        markdown_file = os.path.join(temp_scrape_dir, "test_provider_markdown.txt")
+        markdown_file = os.path.join(
+            temp_scrape_dir, "test_provider_markdown.txt")
         html_file = os.path.join(temp_scrape_dir, "test_provider_html.txt")
         with open(markdown_file, 'w') as f:
             f.write("# Test Content")
@@ -380,7 +388,8 @@ class TestExtractScrapedInfo:
         with open(metadata_file, 'w') as f:
             json.dump(metadata, f)
 
-        markdown_file = os.path.join(temp_scrape_dir, "partial_provider_markdown.txt")
+        markdown_file = os.path.join(
+            temp_scrape_dir, "partial_provider_markdown.txt")
         with open(markdown_file, 'w') as f:
             f.write("# Markdown only")
 
@@ -409,7 +418,8 @@ class TestExtractScrapedInfo:
         with open(metadata_file, 'w') as f:
             json.dump(metadata, f)
 
-        markdown_file = os.path.join(temp_scrape_dir, "empty_provider_markdown.txt")
+        markdown_file = os.path.join(
+            temp_scrape_dir, "empty_provider_markdown.txt")
         with open(markdown_file, 'w') as f:
             f.write("")
 
