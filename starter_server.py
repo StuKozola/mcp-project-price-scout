@@ -214,11 +214,11 @@ def extract_scraped_info(identifier: str) -> str:
                     with open(file_path, 'r') as file:
                         result['content'][format_type] = file.read()
 
-                    return json.dumps(result, indent=2)
-    
-        #  If the loop finishes with no match or if you hit an error (like FileNotFoundError),
-        #  return a string message like
-        return json.dumps({"error": f"There is no saved information realted to identifier '{identifier}'."})
+                return json.dumps(result, indent=2)
+
+    #  If the loop finishes with no match or if you hit an error (like FileNotFoundError),
+    #  return a string message like
+    return json.dumps({"error": f"There is no saved information realted to identifier '{identifier}'."})
 
 
 if __name__ == "__main__":
