@@ -437,7 +437,21 @@ class ChatSession:
             return
 
         try:
-            # complete
+            # read from the pricing_plans table using the tool
+            pricing = await self.sqlite_server.execute_tool("read_query", {
+                "query": "SELECT company_name, plan_name, input_tokens, output_tokens, currency FROM pricing_plans ORDER BY created_at DESC LIMIT 5"
+            })
+
+            print("\nRecently Stored Data:")
+            print("=" * 50)
+
+            print("\nPricing Plans:")
+            # The result.content is a list with one item, a dict, where the 'text' key holds the rows
+            for plan in pricing.content[0]["text"]:
+                print(
+                    f"  • {plan['company_name']}: {plan['plan_name']} - Input Token ${plan['input_tokens']}, Output Tokens ${plan['output_tokens']}")
+
+            print("=" * 50)
         except Exception as e:
             print(f"Error showing data: {e}")
 
