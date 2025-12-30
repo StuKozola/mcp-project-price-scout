@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Provider</title>
+</head>
+<body>
+    <h1>Test Provider</h1>
+    <p>This is sample HTML content for testing.</p>
+    <ul>
+        <li>Feature 1</li>
+        <li>Feature 2</li>
+        <li>Feature 3</li>
+    </ul>
+</body>
+</html>
