@@ -4,10 +4,11 @@ import logging
 import os
 import shutil
 from contextlib import AsyncExitStack
-from typing import Any, List, Dict, TypedDict, cast
+from typing import Any, List, Dict, TypedDict
 from datetime import datetime, timedelta
 from pathlib import Path
 import re
+import ast
 
 from dotenv import load_dotenv
 from anthropic import Anthropic
@@ -63,7 +64,7 @@ class Configuration:
                 if "mcpServers" not in config:
                     raise ValueError(
                         "Configuration file is missing 'mcpServers' field.")
-            return config
+                return config
         except FileNotFoundError:
             raise
         except json.JSONDecodeError:
@@ -141,15 +142,16 @@ class Server:
                 f"Server {self.name} is not initialized. Cannot list tools.")
         # call the session to get tools
         tools_response = await self.session.list_tools()
+        results = []
         # Format the response. The starter code provides the loop; you just need to populate the tool_def dictionary
-        tool_def: List[ToolDefinition] = []
         for tool in tools_response.tools:
-            tool_def.append({
+            tool_def: ToolDefinition = {
                 "name": tool.name,
                 "description": tool.description or "",
                 "input_schema": tool.inputSchema
-            })
-        return tool_def
+            }
+            results.append(tool_def)
+        return results
 
     async def execute_tool(
         self,
@@ -292,22 +294,54 @@ class DataExtractor:
                 "```json\n", "").replace("```", "")
             pricing_data = json.loads(extraction_response)
 
+            # Helper function to escape SQL strings
+            def escape_sql(value: Any) -> str:
+                """Escape single quotes for SQL by replacing ' with ''"""
+                if value is None:
+                    return "NULL"
+                return str(value).replace("'", "''")
+
             for plan in pricing_data.get("plans", []):
-                await self.sqlite_server.execute_tool("write_query", {
+                company_name = escape_sql(
+                    pricing_data.get("company_name", "Unknown"))
+                plan_name = escape_sql(plan.get("plan_name", "Unknown Plan"))
+
+                # Handle numeric fields - use NULL for None values
+                input_tokens = plan.get("input_tokens")
+                input_tokens_sql = "NULL" if input_tokens is None else str(
+                    input_tokens)
+
+                output_tokens = plan.get("output_tokens")
+                output_tokens_sql = "NULL" if output_tokens is None else str(
+                    output_tokens)
+
+                currency = escape_sql(plan.get("currency", "USD"))
+
+                # Handle billing_period - use NULL for None
+                billing_period = plan.get("billing_period")
+                billing_period_sql = "NULL" if billing_period is None else f"'{escape_sql(billing_period)}'"
+
+                features = escape_sql(json.dumps(plan.get("features", [])))
+                limitations = escape_sql(plan.get("limitations", ""))
+                source_query = escape_sql(user_query)
+
+                q = {
                     "query": f"""
                     INSERT INTO pricing_plans (company_name, plan_name, input_tokens, output_tokens, currency, billing_period, features, limitations, source_query)
                     VALUES (
-                        '{pricing_data.get("company_name", "Unknown")}',
-                        '{plan.get("plan_name", "Unknown Plan")}',
-                        '{plan.get("input_tokens", 0)}',
-                        '{plan.get("output_tokens", 0)}',
-                        '{plan.get("currency", "USD")}',
-                        '{plan.get("billing_period", "unknown")}',
-                        '{json.dumps(plan.get("features", []))}',
-                        '{plan.get("limitations", "")}',
-                        '{user_query}')
+                        '{company_name}',
+                        '{plan_name}',
+                        {input_tokens_sql},
+                        {output_tokens_sql},
+                        '{currency}',
+                        {billing_period_sql},
+                        '{features}',
+                        '{limitations}',
+                        '{source_query}')
                     """
-                })
+                }
+                logger.info(f"Query to execute: {q['query']}")
+                await self.sqlite_server.execute_tool("write_query", q)
 
             logger.info(
                 f"Stored {len(pricing_data.get('plans', []))} pricing plans")
@@ -364,10 +398,8 @@ class ChatSession:
                 elif content.type == 'tool_use':
                     # append the tool user request to assistant_content and then to messages
                     assistant_content.append(content)
-                    messages.append(cast(MessageParam, {
-                        'role': 'assistant',
-                        'content': assistant_content
-                    }))
+                    messages.append(
+                        {'role': 'assistant', 'content': assistant_content})
                     # get the tool id, args and name from the content
                     tool_name = content.name
                     tool_args = content.input
@@ -384,7 +416,7 @@ class ChatSession:
                     # execute the tool
                     tool_result = await server.execute_tool(tool_name, tool_args)
                     # append the tool result to messages
-                    messages.append(cast(MessageParam, {
+                    messages.append({
                         'role': 'user',
                         'content': [
                             {
@@ -393,7 +425,7 @@ class ChatSession:
                                 'content': str(tool_result)
                             }
                         ]
-                    }))
+                    })
                     # call the anthropic client again with updated messages
                     response = self.anthropic.messages.create(
                         max_tokens=2024,
@@ -453,8 +485,9 @@ class ChatSession:
             print("=" * 50)
 
             print("\nPricing Plans:")
+            print(pricing.content[0].text)
             # The result.content is a list with one item, a dict, where the 'text' key holds the rows
-            for plan in pricing.content[0]["text"]:
+            for plan in ast.literal_eval(pricing.content[0].text):
                 print(
                     f"  • {plan['company_name']}: {plan['plan_name']} - Input Token ${plan['input_tokens']}, Output Tokens ${plan['output_tokens']}")
 

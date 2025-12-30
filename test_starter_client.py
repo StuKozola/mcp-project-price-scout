@@ -549,7 +549,10 @@ class TestChatSession:
         """Test successfully showing stored data"""
         mock_server = AsyncMock()
         mock_result = Mock()
-        mock_result.content = [{"text": [
+
+        # Create a mock TextContent object with .text attribute
+        mock_text_content = Mock()
+        mock_text_content.text = str([
             {
                 "company_name": "Test Co",
                 "plan_name": "Basic",
@@ -557,7 +560,8 @@ class TestChatSession:
                 "output_tokens": 0.002,
                 "currency": "USD"
             }
-        ]}]
+        ])
+        mock_result.content = [mock_text_content]
         mock_server.execute_tool = AsyncMock(return_value=mock_result)
 
         with patch('starter_client.Anthropic'), \
