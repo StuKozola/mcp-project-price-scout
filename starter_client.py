@@ -289,7 +289,21 @@ class DataExtractor:
             pricing_data = json.loads(extraction_response)
 
             for plan in pricing_data.get("plans", []):
-                # complete
+                await self.sqlite_server.execute_tool("write_query", {
+                    "query": f"""
+                    INSERT INTO pricing_plans (company_name, plan_name, input_tokens, output_tokens, currency, billing_period, features, limitations, source_query)
+                    VALUES (
+                        '{pricing_data.get("company_name", "Unknown")}',
+                        '{plan.get("plan_name", "Unknown Plan")}',
+                        '{plan.get("input_tokens", 0)}',
+                        '{plan.get("output_tokens", 0)}',
+                        '{plan.get("currency", "USD")}',
+                        '{plan.get("billing_period", "unknown")}',
+                        '{json.dumps(plan.get("features", []))}',
+                        '{plan.get("limitations", "")}',
+                        '{user_query}')
+                    """
+                })
 
             logger.info(
                 f"Stored {len(pricing_data.get('plans', []))} pricing plans")
@@ -322,7 +336,7 @@ class ChatSession:
         messages = [{'role': 'user', 'content': query}]
         response = self.anthropic.messages.create(
             max_tokens=2024,
-            model='<ENTER_MODEL_NAME>',
+            model='claude-sonnet-4-5-20250929',
             tools=self.available_tools,
             messages=messages
         )
@@ -336,9 +350,52 @@ class ChatSession:
             assistant_content = []
             for content in response.content:
                 if content.type == 'text':
-                    # complete
+                    # add the test to full response
+                    full_response += content.text + "\n"
+                    # add the content to the assistant's message
+                    assistant_content.append(content)
+                    # check this is the only conent, if so model is done
+                    if len(response.content) == 1:
+                        process_query = False
                 elif content.type == 'tool_use':
-                    # complete
+                    # append the tool user request to assistant_content and then to messages
+                    assistant_content.append(content)
+                    messages.append({
+                        'role': 'assistant',
+                        'content': assistant_content,
+                        'tool_use': content.tool_use
+                    })
+                    # get the tool id, args and name from the content
+                    tool_use = content.tool_use
+                    tool_name = tool_use.tool_id
+                    tool_args = tool_use.arguments
+                    # find the server for the tool
+                    server_name = self.tool_to_server.get(tool_name)
+                    if not server_name:
+                        raise ValueError(
+                            f"Server for tool {tool_name} not found.")
+                    server = next(
+                        (srv for srv in self.servers if srv.name == server_name), None)
+                    if not server:
+                        raise ValueError(
+                            f"Server {server_name} not found for tool {tool_name}.")
+                    # execute the tool
+                    tool_result = await server.execute_tool(tool_name, tool_args)
+                    # append the tool result to messages
+                    messages.append({
+                        'role': 'tool',
+                        'name': tool_name,
+                        'content': tool_result})
+                    # call the anthropic client again with updated messages
+                    response = self.anthropic.messages.create(
+                        max_tokens=2024,
+                        model='claude-sonnet-4-5-20250929',
+                        tools=self.available_tools,
+                        messages=messages
+                    )
+                    # check if the new respons is just text, and if so, stop the loop
+                    if all(c.type == 'text' for c in response.content):
+                        process_query = False
 
         if self.data_extractor and full_response.strip():
             await self.data_extractor.extract_and_store_data(query, full_response.strip(), source_url)
