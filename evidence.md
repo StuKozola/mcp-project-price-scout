@@ -14,7 +14,7 @@ Query: How much does deepinfra (https://deepinfra.com/pricing) charge for deepse
 ## Task 3
 Ask a question about the scraped data:
 ```
-Query: Compare cloudrift ai and deepinfra's costs for deepseek v3H
+Query: Compare cloudrift ai and deepinfra's costs for deepseek v3
 ```
 ![Task 3 Result](./images/task_3.png)
 ## Task 4
