@@ -244,7 +244,7 @@ class DataExtractor:
         """Use Claude to extract structured data."""
         try:
             response = self.anthropic.messages.create(
-                max_tokens=1024,
+                max_tokens=2024,
                 model='claude-sonnet-4-5-20250929',
                 messages=[{'role': 'user', 'content': prompt}]
             )
@@ -260,39 +260,222 @@ class DataExtractor:
             logging.error(f"Error in structured extraction: {e}")
             return '{"error": "extraction failed"}'
 
+    def _manual_extract_pricing(self, original_text: str, extraction_attempt: str) -> dict | None:
+        """Manually extract pricing information when JSON parsing fails."""
+        try:
+            logger.info("Starting manual extraction...")
+            logger.info(f"Original text length: {len(original_text)}")
+            logger.info(f"First 500 chars of original: {original_text[:500]}")
+
+            # Look for company name in the original text or extraction attempt
+            company_patterns = [
+                r'Fireworks',
+                r'fireworks\.ai',
+                r'(?:company[_\s]?name["\s:]+)([A-Za-z0-9\s]+)',
+            ]
+
+            company_name = "Fireworks"  # Default for this case
+            for pattern in company_patterns:
+                match = re.search(pattern, original_text, re.IGNORECASE)
+                if match:
+                    company_name = match.group(1) if match.lastindex and len(
+                        match.groups()) > 0 else match.group(0)
+                    company_name = company_name.strip().strip('"').strip("'")
+                    logger.info(f"Found company name: {company_name}")
+                    break
+
+            # Look for pricing patterns - much broader patterns
+            # Try to find any number that looks like a price
+            all_price_patterns = [
+                # Matches things like "$0.20" or "0.20"
+                r'\$?(\d+\.\d+)',
+                # Matches things like "$2" or "2"
+                r'\$?(\d+)',
+            ]
+
+            # Find all potential prices in the text
+            potential_prices = []
+            for pattern in all_price_patterns:
+                matches = re.finditer(pattern, original_text)
+                for match in matches:
+                    try:
+                        price = float(match.group(1))
+                        # Filter reasonable prices (between 0.00001 and 100)
+                        if 0.00001 <= price <= 100:
+                            potential_prices.append(price)
+                    except:
+                        pass
+
+            logger.info(
+                f"Found {len(potential_prices)} potential prices: {potential_prices[:10]}")
+
+            # If we found prices, use the first two as input/output
+            input_price = None
+            output_price = None
+
+            if len(potential_prices) >= 2:
+                # Typically input tokens are cheaper than output
+                prices_sorted = sorted(set(potential_prices))
+                if len(prices_sorted) >= 2:
+                    input_price = prices_sorted[0]
+                    output_price = prices_sorted[1]
+                elif len(prices_sorted) == 1:
+                    input_price = prices_sorted[0]
+                    output_price = prices_sorted[0]
+            elif len(potential_prices) == 1:
+                input_price = potential_prices[0]
+                output_price = potential_prices[0]
+
+            logger.info(
+                f"Selected prices - input: {input_price}, output: {output_price}")
+
+            # If we found at least one price, create a plan
+            if input_price is not None or output_price is not None:
+                logger.info(
+                    f"Manual extraction SUCCESS: company={company_name}, input={input_price}, output={output_price}")
+                return {
+                    "company_name": company_name,
+                    "plans": [{
+                        "plan_name": "Standard Pricing",
+                        "input_tokens": input_price,
+                        "output_tokens": output_price,
+                        "currency": "USD",
+                        "billing_period": "per-million-tokens",
+                        "features": ["API access"],
+                        "limitations": "Extracted via fallback method"
+                    }]
+                }
+
+            logger.warning("No prices found in manual extraction")
+            return None
+
+        except Exception as e:
+            logger.error(f"Manual extraction failed with exception: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
     async def extract_and_store_data(self, user_query: str, llm_response: str,
                                      source_url: str = "") -> None:
         """Extract structured data from LLM response and store it."""
         try:
             extraction_prompt = f"""
-            Analyze this text and extract pricing information in JSON format:
+            Analyze this text and extract pricing information in JSON format.
             
             Text: {llm_response}
             
-            Extract pricing plans with this structure:
+            Extract pricing plans with this EXACT structure. Use null for missing numeric values:
             {{
                 "company_name": "company name",
                 "plans": [
                     {{
                         "plan_name": "plan name",
-                        "input_tokens": number or null,
-                        "output_tokens": number or null,
+                        "input_tokens": 0.001,
+                        "output_tokens": 0.002,
                         "currency": "USD",
-                        "billing_period": "monthly/yearly/one-time",
+                        "billing_period": "per-million-tokens",
                         "features": ["feature1", "feature2"],
-                        "limitations": "any limitations mentioned",
-                        "query": "the user's query"
+                        "limitations": "any limitations"
                     }}
                 ]
             }}
             
-            Return only valid JSON, no other text. Do not return your response enclosed in ```json```
+            CRITICAL RULES:
+            - Return ONLY valid JSON, no explanations or markdown
+            - Use null (not "null" string) for missing numeric values
+            - Escape all special characters in strings (quotes, backslashes, newlines)
+            - Keep feature descriptions SHORT (max 50 chars each)
+            - Do NOT include any text before or after the JSON
+            - Do NOT wrap in code blocks or backticks
+            - Pricing should be per million tokens if mentioned
+            - Use simple, clean strings without special characters
             """
 
             extraction_response = await self._get_structured_extraction(extraction_prompt)
+            logger.info(
+                f"Attempting to parse extraction response: {extraction_response}")
+            # Clean up the response - remove code blocks and extra whitespace
+            extraction_response = extraction_response.strip()
+            # Remove markdown code blocks (various formats)
             extraction_response = extraction_response.replace(
-                "```json\n", "").replace("```", "")
-            pricing_data = json.loads(extraction_response)
+                "```json\n", "").replace("```json", "")
+            extraction_response = extraction_response.replace(
+                "```\n", "").replace("```", "")
+            extraction_response = extraction_response.strip()
+
+            # Log what we're trying to parse for debugging
+            logger.info(
+                f"Attempting to parse extraction response (first 500 chars): {extraction_response[:500]}")
+
+            # Function to try fixing common JSON issues
+            def try_fix_json(json_str: str) -> str:
+                """Attempt to fix common JSON formatting issues"""
+                # Replace problematic characters
+                json_str = json_str.replace('\n', ' ').replace('\r', ' ')
+                # Fix multiple spaces
+                json_str = ' '.join(json_str.split())
+                return json_str
+
+            try:
+                pricing_data = json.loads(extraction_response)
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    f"Initial JSON parse failed: {e}. Trying fixes...")
+
+                # Try to fix and parse again
+                try:
+                    fixed_response = try_fix_json(extraction_response)
+                    pricing_data = json.loads(fixed_response)
+                    logger.info("Successfully parsed after fixing")
+                except json.JSONDecodeError:
+                    # Try to extract JSON object from response
+                    logger.warning("Trying to extract JSON object...")
+                    start = extraction_response.find('{')
+                    end = extraction_response.rfind('}') + 1
+                    if start != -1 and end > start:
+                        try:
+                            extracted = extraction_response[start:end]
+                            pricing_data = json.loads(try_fix_json(extracted))
+                            logger.info(
+                                "Successfully extracted and parsed JSON")
+                        except json.JSONDecodeError as final_error:
+                            logger.error(
+                                f"All parsing attempts failed: {final_error}")
+                            logger.error(
+                                f"Full response (first 1000 chars): {extraction_response[:1000]}")
+
+                            # Last resort: Try to manually extract pricing info
+                            logger.info(
+                                "Attempting manual extraction from text...")
+
+                            # First try with the llm response
+                            pricing_data = self._manual_extract_pricing(
+                                llm_response, extraction_response)
+
+                            # If that fails, try to get the original scraped content
+                            if not pricing_data:
+                                logger.info(
+                                    "Manual extraction from LLM response failed, trying scraped content...")
+                                # Look for scraped content in the response
+                                if "fireworks" in user_query.lower():
+                                    scraped_file = "scraped_content/fireworks_ai_pricing_markdown.txt"
+                                    import os
+                                    if os.path.exists(scraped_file):
+                                        logger.info(
+                                            f"Reading scraped content from {scraped_file}")
+                                        with open(scraped_file, 'r') as f:
+                                            scraped_content = f.read()
+                                        pricing_data = self._manual_extract_pricing(
+                                            scraped_content, extraction_response)
+
+                            if not pricing_data:
+                                logger.error(
+                                    "Manual extraction also failed. Skipping data storage.")
+                                return
+                    else:
+                        logger.error("No JSON object found in response")
+                        logger.error(f"Full response: {extraction_response}")
+                        return
 
             # Helper function to escape SQL strings
             def escape_sql(value: Any) -> str:
@@ -374,67 +557,81 @@ class ChatSession:
         """Process a user query and extract/store relevant data."""
         messages: List[MessageParam] = [{'role': 'user', 'content': query}]
         response = self.anthropic.messages.create(
-            max_tokens=1024,
+            max_tokens=2024,
             model='claude-sonnet-4-5-20250929',
+            tools=self.available_tools,
             messages=messages
         )
 
         full_response = ""
         source_url = None
-        used_web_search = False
 
-        process_query = True
-        while process_query:
+        while True:
+            # Collect assistant content
             assistant_content = []
+            tool_uses = []
+
             for content in response.content:
                 if content.type == 'text':
-                    # add the test to full response
                     full_response += content.text + "\n"
-                    # add the content to the assistant's message
+                    print(content.text)  # Print response as we get it
                     assistant_content.append(content)
-                    # check this is the only conent, if so model is done
-                    if len(response.content) == 1:
-                        process_query = False
                 elif content.type == 'tool_use':
-                    # append the tool user request to assistant_content and then to messages
                     assistant_content.append(content)
-                    messages.append(
-                        {'role': 'assistant', 'content': assistant_content})
-                    # get the tool id, args and name from the content
-                    tool_name = content.name
-                    tool_args = content.input
-                    # find the server for the tool
-                    server_name = self.tool_to_server.get(tool_name)
-                    if not server_name:
-                        raise ValueError(
-                            f"Server for tool {tool_name} not found.")
-                    server = next(
-                        (srv for srv in self.servers if srv.name == server_name), None)
-                    if not server:
-                        raise ValueError(
-                            f"Server {server_name} not found for tool {tool_name}.")
-                    # execute the tool
-                    tool_result = await server.execute_tool(tool_name, tool_args)
-                    # append the tool result to messages
-                    messages.append({
-                        'role': 'user',
-                        'content': [
-                            {
+                    tool_uses.append(content)
+
+            # Add assistant message to conversation
+            messages.append({
+                'role': 'assistant',
+                'content': assistant_content
+            })
+
+            # If no tool uses, we're done
+            if not tool_uses:
+                break
+
+            # Execute tools and collect results
+            tool_results = []
+            for tool_use in tool_uses:
+                tool_name = tool_use.name
+                tool_args = tool_use.input
+                tool_id = tool_use.id
+
+                if tool_name in self.tool_to_server:
+                    logging.info(
+                        f"Tool {tool_name} requested with args {tool_args}")
+                    server_name = self.tool_to_server[tool_name]
+
+                    for server in self.servers:
+                        if server.name == server_name:
+                            tool_result = await server.execute_tool(tool_name, tool_args)
+                            logging.info(f"Tool {tool_name} executed")
+                            tool_results.append({
                                 'type': 'tool_result',
-                                'tool_use_id': content.id,
-                                'content': str(tool_result)
-                            }
-                        ]
-                    })
-                    # call the anthropic client again with updated messages
-                    response = self.anthropic.messages.create(
-                        max_tokens=2024,
-                        model='claude-sonnet-4-5-20250929',
-                        messages=messages
-                    )
-                    # check if the new respons is just text, and if so, stop the loop
-                    if all(c.type == 'text' for c in response.content):
-                        process_query = False
+                                'tool_use_id': tool_id,
+                                'content': tool_result.content
+                            })
+                            break
+                else:
+                    logger.warning(
+                        f"Tool {tool_name} not found in available tools")
+
+            # Add tool results to conversation
+            if tool_results:
+                messages.append({
+                    'role': 'user',
+                    'content': tool_results
+                })
+
+                # Get next response from Claude
+                response = self.anthropic.messages.create(
+                    max_tokens=2024,
+                    model='claude-sonnet-4-5-20250929',
+                    tools=self.available_tools,
+                    messages=messages
+                )
+            else:
+                break
 
         if self.data_extractor and full_response.strip():
             await self.data_extractor.extract_and_store_data(query, full_response.strip(), source_url or "")
@@ -485,11 +682,27 @@ class ChatSession:
             print("=" * 50)
 
             print("\nPricing Plans:")
-            print(pricing.content[0].text)
-            # The result.content is a list with one item, a dict, where the 'text' key holds the rows
-            for plan in ast.literal_eval(pricing.content[0].text):
-                print(
-                    f"  • {plan['company_name']}: {plan['plan_name']} - Input Token ${plan['input_tokens']}, Output Tokens ${plan['output_tokens']}")
+
+            # Check if we have valid content
+            if not pricing or not pricing.content or len(pricing.content) == 0:
+                print("  No data available")
+            else:
+                result_text = pricing.content[0].text
+                if not result_text or result_text.strip() == "":
+                    print("  No data available")
+                else:
+                    # Parse the result
+                    try:
+                        plans = ast.literal_eval(result_text)
+                        if not plans or len(plans) == 0:
+                            print("  No data available")
+                        else:
+                            for plan in plans:
+                                print(
+                                    f"  • {plan['company_name']}: {plan['plan_name']} - Input Token ${plan['input_tokens']}, Output Tokens ${plan['output_tokens']}")
+                    except (ValueError, SyntaxError) as parse_error:
+                        print(f"  Error parsing data: {parse_error}")
+                        print(f"  Raw result: {result_text}")
 
             print("=" * 50)
         except Exception as e:

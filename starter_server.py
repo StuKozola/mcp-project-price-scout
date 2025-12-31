@@ -113,8 +113,10 @@ def scrape_websites(
             content = app.scrape(url, formats=cast(Any, formats))
             scrape_result = content.model_dump()
 
-            # If successful, save the content to files
-            if scrape_result.get("success", False):
+            # Check if we got any content (Firecrawl v2 doesn't return 'success' field)
+            has_content = any(scrape_result.get(format) for format in formats)
+
+            if has_content:
                 logger.info(f"Successfully scraped {provider_name}")
                 content_files = {}
                 for format in formats:
@@ -124,7 +126,8 @@ def scrape_websites(
                         file.write(scrape_result.get(format, ''))
                     content_files[format] = file_path
             else:
-                logger.error(f"Failed to scrape {provider_name}")
+                logger.error(
+                    f"Failed to scrape {provider_name} - no content returned")
                 continue
 
         except Exception as e:
@@ -133,8 +136,8 @@ def scrape_websites(
             continue
 
         finally:
-            # Update the metadata only if content was successfully scraped
-            if content is not None:
+            # Update the metadata only if content was successfully scraped and files were created
+            if content is not None and content_files:
                 scraped_metadata[provider_name] = {
                     "provider_name": provider_name,
                     "url": url,

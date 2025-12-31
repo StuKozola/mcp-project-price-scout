@@ -187,16 +187,13 @@ class TestScrapeWebsites:
                 scrape_websites(websites)
 
     def test_scrape_websites_failed_scrape(self, temp_scrape_dir):
-        """Test handling of failed scrape attempts
-
-        Note: Current implementation has a bug where failed scrapes still get 
-        added to successful_scrapes due to the finally block. This test reflects
-        the current behavior, not the ideal behavior.
-        """
+        """Test handling of failed scrape attempts when no content is returned"""
         websites = {"failed_provider": "https://example.com"}
 
         mock_response = Mock()
-        mock_response.model_dump.return_value = {"success": False}
+        # Firecrawl v2 doesn't return 'success' field, just empty content
+        mock_response.model_dump.return_value = {
+            "markdown": None, "html": None}
         mock_response.title = "Failed Title"
         mock_response.description = "Failed Description"
 
@@ -207,12 +204,11 @@ class TestScrapeWebsites:
 
             result = scrape_websites(websites, api_key="test_api_key")
 
-            # BUG: Current implementation adds failed scrapes to successful list
-            # This should ideally return empty list when scrape fails
-            assert len(result) == 1
-            assert "failed_provider" in result
+            # When no content is returned, scrape should fail and not be added to results
+            assert len(result) == 0
+            assert "failed_provider" not in result
 
-            # Verify metadata was created even though scrape "failed"
+            # Verify metadata file exists but doesn't contain the failed provider
             metadata_file = os.path.join(
                 temp_scrape_dir, "scraped_metadata.json")
             assert os.path.exists(metadata_file)
