@@ -392,8 +392,7 @@ class DataExtractor:
             """
 
             extraction_response = await self._get_structured_extraction(extraction_prompt)
-            logger.info(
-                f"Attempting to parse extraction response: {extraction_response}")
+            # logger.info(f"Attempting to parse extraction response: {extraction_response}")
             # Clean up the response - remove code blocks and extra whitespace
             extraction_response = extraction_response.strip()
             # Remove markdown code blocks (various formats)
@@ -404,8 +403,8 @@ class DataExtractor:
             extraction_response = extraction_response.strip()
 
             # Log what we're trying to parse for debugging
-            logger.info(
-                f"Attempting to parse extraction response (first 500 chars): {extraction_response[:500]}")
+            # logger.info(
+            # f"Attempting to parse extraction response (first 500 chars): {extraction_response[:500]}")
 
             # Function to try fixing common JSON issues
             def try_fix_json(json_str: str) -> str:
@@ -523,7 +522,7 @@ class DataExtractor:
                         '{source_query}')
                     """
                 }
-                logger.info(f"Query to execute: {q['query']}")
+                # logger.info(f"Query to execute: {q['query']}")
                 await self.sqlite_server.execute_tool("write_query", q)
 
             logger.info(
