@@ -243,8 +243,14 @@ class DataExtractor:
     async def _get_structured_extraction(self, prompt: str) -> str:
         """Use Claude to extract structured data."""
         try:
+            # Validate prompt is not empty
+            if not prompt or not prompt.strip():
+                logging.error(
+                    "Empty prompt provided to _get_structured_extraction")
+                return '{"error": "empty prompt"}'
+
             response = self.anthropic.messages.create(
-                max_tokens=2024,
+                max_tokens=15000,
                 model='claude-sonnet-4-5-20250929',
                 messages=[{'role': 'user', 'content': prompt}]
             )
@@ -260,105 +266,15 @@ class DataExtractor:
             logging.error(f"Error in structured extraction: {e}")
             return '{"error": "extraction failed"}'
 
-    def _manual_extract_pricing(self, original_text: str, extraction_attempt: str) -> dict | None:
-        """Manually extract pricing information when JSON parsing fails."""
-        try:
-            logger.info("Starting manual extraction...")
-            logger.info(f"Original text length: {len(original_text)}")
-            logger.info(f"First 500 chars of original: {original_text[:500]}")
-
-            # Look for company name in the original text or extraction attempt
-            company_patterns = [
-                r'Fireworks',
-                r'fireworks\.ai',
-                r'(?:company[_\s]?name["\s:]+)([A-Za-z0-9\s]+)',
-            ]
-
-            company_name = "Fireworks"  # Default for this case
-            for pattern in company_patterns:
-                match = re.search(pattern, original_text, re.IGNORECASE)
-                if match:
-                    company_name = match.group(1) if match.lastindex and len(
-                        match.groups()) > 0 else match.group(0)
-                    company_name = company_name.strip().strip('"').strip("'")
-                    logger.info(f"Found company name: {company_name}")
-                    break
-
-            # Look for pricing patterns - much broader patterns
-            # Try to find any number that looks like a price
-            all_price_patterns = [
-                # Matches things like "$0.20" or "0.20"
-                r'\$?(\d+\.\d+)',
-                # Matches things like "$2" or "2"
-                r'\$?(\d+)',
-            ]
-
-            # Find all potential prices in the text
-            potential_prices = []
-            for pattern in all_price_patterns:
-                matches = re.finditer(pattern, original_text)
-                for match in matches:
-                    try:
-                        price = float(match.group(1))
-                        # Filter reasonable prices (between 0.00001 and 100)
-                        if 0.00001 <= price <= 100:
-                            potential_prices.append(price)
-                    except:
-                        pass
-
-            logger.info(
-                f"Found {len(potential_prices)} potential prices: {potential_prices[:10]}")
-
-            # If we found prices, use the first two as input/output
-            input_price = None
-            output_price = None
-
-            if len(potential_prices) >= 2:
-                # Typically input tokens are cheaper than output
-                prices_sorted = sorted(set(potential_prices))
-                if len(prices_sorted) >= 2:
-                    input_price = prices_sorted[0]
-                    output_price = prices_sorted[1]
-                elif len(prices_sorted) == 1:
-                    input_price = prices_sorted[0]
-                    output_price = prices_sorted[0]
-            elif len(potential_prices) == 1:
-                input_price = potential_prices[0]
-                output_price = potential_prices[0]
-
-            logger.info(
-                f"Selected prices - input: {input_price}, output: {output_price}")
-
-            # If we found at least one price, create a plan
-            if input_price is not None or output_price is not None:
-                logger.info(
-                    f"Manual extraction SUCCESS: company={company_name}, input={input_price}, output={output_price}")
-                return {
-                    "company_name": company_name,
-                    "plans": [{
-                        "plan_name": "Standard Pricing",
-                        "input_tokens": input_price,
-                        "output_tokens": output_price,
-                        "currency": "USD",
-                        "billing_period": "per-million-tokens",
-                        "features": ["API access"],
-                        "limitations": "Extracted via fallback method"
-                    }]
-                }
-
-            logger.warning("No prices found in manual extraction")
-            return None
-
-        except Exception as e:
-            logger.error(f"Manual extraction failed with exception: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
-
     async def extract_and_store_data(self, user_query: str, llm_response: str,
                                      source_url: str = "") -> None:
         """Extract structured data from LLM response and store it."""
         try:
+            # Skip if content is empty
+            if not llm_response or not llm_response.strip():
+                logger.warning("Skipping extraction - empty content")
+                return
+
             extraction_prompt = f"""
             Analyze this text and extract pricing information in JSON format.
             
@@ -442,35 +358,9 @@ class DataExtractor:
                                 f"All parsing attempts failed: {final_error}")
                             logger.error(
                                 f"Full response (first 1000 chars): {extraction_response[:1000]}")
-
-                            # Last resort: Try to manually extract pricing info
-                            logger.info(
-                                "Attempting manual extraction from text...")
-
-                            # First try with the llm response
-                            pricing_data = self._manual_extract_pricing(
-                                llm_response, extraction_response)
-
-                            # If that fails, try to get the original scraped content
-                            if not pricing_data:
-                                logger.info(
-                                    "Manual extraction from LLM response failed, trying scraped content...")
-                                # Look for scraped content in the response
-                                if "fireworks" in user_query.lower():
-                                    scraped_file = "scraped_content/fireworks_ai_pricing_markdown.txt"
-                                    import os
-                                    if os.path.exists(scraped_file):
-                                        logger.info(
-                                            f"Reading scraped content from {scraped_file}")
-                                        with open(scraped_file, 'r') as f:
-                                            scraped_content = f.read()
-                                        pricing_data = self._manual_extract_pricing(
-                                            scraped_content, extraction_response)
-
-                            if not pricing_data:
-                                logger.error(
-                                    "Manual extraction also failed. Skipping data storage.")
-                                return
+                            logger.error(
+                                "Skipping data storage.")
+                            return
                     else:
                         logger.error("No JSON object found in response")
                         logger.error(f"Full response: {extraction_response}")
@@ -556,7 +446,7 @@ class ChatSession:
         """Process a user query and extract/store relevant data."""
         messages: List[MessageParam] = [{'role': 'user', 'content': query}]
         response = self.anthropic.messages.create(
-            max_tokens=2024,
+            max_tokens=15000,
             model='claude-sonnet-4-5-20250929',
             tools=self.available_tools,
             messages=messages
@@ -564,6 +454,7 @@ class ChatSession:
 
         full_response = ""
         source_url = None
+        scraped_contents = []  # Store all scraped content
 
         while True:
             # Collect assistant content
@@ -605,6 +496,17 @@ class ChatSession:
                         if server.name == server_name:
                             tool_result = await server.execute_tool(tool_name, tool_args)
                             logging.info(f"Tool {tool_name} executed")
+
+                            # Store scraped content for data extraction
+                            if tool_name in ['fetch_url', 'scrape_url', 'read_file', 'scrape_websites']:
+                                for content_item in tool_result.content:
+                                    if hasattr(content_item, 'text'):
+                                        scraped_contents.append({
+                                            'tool': tool_name,
+                                            'args': tool_args,
+                                            'content': content_item.text
+                                        })
+
                             tool_results.append({
                                 'type': 'tool_result',
                                 'tool_use_id': tool_id,
@@ -624,7 +526,7 @@ class ChatSession:
 
                 # Get next response from Claude
                 response = self.anthropic.messages.create(
-                    max_tokens=2024,
+                    max_tokens=15000,
                     model='claude-sonnet-4-5-20250929',
                     tools=self.available_tools,
                     messages=messages
@@ -632,8 +534,54 @@ class ChatSession:
             else:
                 break
 
-        if self.data_extractor and full_response.strip():
-            await self.data_extractor.extract_and_store_data(query, full_response.strip(), source_url or "")
+        # Extract data from each scraped content
+        if self.data_extractor and scraped_contents:
+            for scraped in scraped_contents:
+                await self.data_extractor.extract_and_store_data(
+                    query,
+                    scraped['content'],
+                    scraped['args'].get('url', '') if isinstance(
+                        scraped['args'], dict) else ''
+                )
+        # If no scraped contents but scrape_websites was called, check for existing files
+        elif self.data_extractor and 'scrape' in query.lower():
+            logger.info("Checking for existing scraped content files...")
+            scraped_dir = Path(__file__).parent.parent / "scraped_content"
+            if scraped_dir.exists():
+                # Look for markdown files
+                for markdown_file in scraped_dir.glob("*_markdown.txt"):
+                    try:
+                        with open(markdown_file, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        # Extract company name and URL from metadata
+                        metadata_file = scraped_dir / "scraped_metadata.json"
+                        url = ""
+                        if metadata_file.exists():
+                            with open(metadata_file, 'r', encoding='utf-8') as f:
+                                metadata = json.load(f)
+                                # Find matching provider
+                                provider_name = markdown_file.stem.replace(
+                                    '_markdown', '')
+                                for provider, data in metadata.items():
+                                    if provider.lower() == provider_name.lower():
+                                        url = data.get('url', '')
+                                        break
+
+                        logger.info(
+                            f"Processing existing scraped file: {markdown_file.name}")
+                        # Only process if content is not empty
+                        if content and content.strip():
+                            await self.data_extractor.extract_and_store_data(
+                                query,
+                                content,
+                                url
+                            )
+                        else:
+                            logger.warning(
+                                f"Skipping empty file: {markdown_file.name}")
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to process {markdown_file}: {e}")
 
     def _extract_url_from_result(self, result_text: str) -> str | None:
         """Extract URL from tool result."""
@@ -653,7 +601,10 @@ class ChatSession:
                 if query.lower() == 'quit':
                     break
                 elif query.lower() == 'show data':
-                    await self.show_stored_data()
+                    await self.show_stored_data(limit=5)
+                    continue
+                elif query.lower() == 'show data all':
+                    await self.show_stored_data(limit=None)
                     continue
 
                 await self.process_query(query)
@@ -665,7 +616,7 @@ class ChatSession:
             except Exception as e:
                 print(f"\nError: {str(e)}")
 
-    async def show_stored_data(self) -> None:
+    async def show_stored_data(self, limit: int = 5) -> None:
         """Show recently stored data."""
         if not self.sqlite_server:
             logger.info("No database available")
@@ -673,8 +624,12 @@ class ChatSession:
 
         try:
             # read from the pricing_plans table using the tool
+            if limit is None:
+                q = "SELECT company_name, plan_name, input_tokens, output_tokens, currency FROM pricing_plans ORDER BY created_at DESC"
+            else:
+                q = f"SELECT company_name, plan_name, input_tokens, output_tokens, currency FROM pricing_plans ORDER BY created_at DESC LIMIT {limit}"
             pricing = await self.sqlite_server.execute_tool("read_query", {
-                "query": "SELECT company_name, plan_name, input_tokens, output_tokens, currency FROM pricing_plans ORDER BY created_at DESC LIMIT 5"
+                "query": q
             })
 
             print("\nRecently Stored Data:")
