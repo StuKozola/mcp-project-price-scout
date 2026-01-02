@@ -446,28 +446,28 @@ class ChatSession:
         """Check if the database has relevant information for the query."""
         if not self.sqlite_server:
             return None
-        
+
         try:
             # Check if we have any data in the database
             result = await self.sqlite_server.execute_tool("read_query", {
                 "query": "SELECT COUNT(*) as count FROM pricing_plans"
             })
-            
+
             if result and result.content:
                 count_text = result.content[0].text
                 count = ast.literal_eval(count_text)[0]['count']
-                
+
                 if count > 0:
                     # Get all pricing data to check if it's relevant
                     pricing_result = await self.sqlite_server.execute_tool("read_query", {
                         "query": "SELECT company_name, plan_name, input_tokens, output_tokens, currency FROM pricing_plans"
                     })
-                    
+
                     if pricing_result and pricing_result.content:
                         data_text = pricing_result.content[0].text
                         logger.info(f"Found {count} pricing plans in database")
                         return data_text
-            
+
             return None
         except Exception as e:
             logger.warning(f"Error checking database: {e}")
@@ -477,22 +477,27 @@ class ChatSession:
         """Process a user query and extract/store relevant data."""
         # Check if database has relevant information
         db_data = await self.check_database_for_query(query)
-        
+
         # Prepare tools - exclude scraping tools if we have database data
         tools_to_use = self.available_tools
         if db_data:
-            logger.info("Database has existing data, excluding scraping tools from available tools")
+            logger.info(
+                "Database has existing data, excluding scraping tools from available tools")
             # Filter out scraping tools
-            scraping_tool_names = ['scrape_websites', 'fetch_url', 'scrape_url']
-            tools_to_use = [tool for tool in self.available_tools if tool['name'] not in scraping_tool_names]
-            
+            scraping_tool_names = [
+                'scrape_websites', 'fetch_url', 'scrape_url']
+            tools_to_use = [
+                tool for tool in self.available_tools if tool['name'] not in scraping_tool_names]
+
             # Add database context to the query
             enhanced_query = f"{query}\n\nAvailable pricing data from database:\n{db_data}"
-            messages: List[MessageParam] = [{'role': 'user', 'content': enhanced_query}]
+            messages: List[MessageParam] = [
+                {'role': 'user', 'content': enhanced_query}]
         else:
-            logger.info("No relevant data in database, including scraping tools")
+            logger.info(
+                "No relevant data in database, including scraping tools")
             messages: List[MessageParam] = [{'role': 'user', 'content': query}]
-        
+
         response = self.anthropic.messages.create(
             max_tokens=15000,
             model='claude-sonnet-4-5-20250929',
@@ -576,7 +581,7 @@ class ChatSession:
                 response = self.anthropic.messages.create(
                     max_tokens=15000,
                     model='claude-sonnet-4-5-20250929',
-                    tools=self.available_tools,
+                    tools=tools_to_use,
                     messages=messages
                 )
             else:
@@ -649,7 +654,7 @@ class ChatSession:
                 # Skip empty queries
                 if not query:
                     continue
-                
+
                 if query.lower() == 'quit':
                     break
                 elif query.lower() == 'show data':
