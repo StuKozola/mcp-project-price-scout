@@ -2,7 +2,7 @@
 ## Task 1
 Run the client and scrape 4 webistes:
 ```
-Query: scrape these sites: {'cloudrift': 'https://www.cloudrift.ai/inference', 'deepinfra': 'https://deepinfra.com/pricing', 'fireworks': 'https://fireworks.ai/pricing#serverless-pricing', 'groq': 'https://groq.com/pricing'}
+Query: scrape these sites: {'cloudrift': 'https.www.cloudrift.ai/inference', 'deepinfra': 'https://deepinfra.com/pricing', 'fireworks': 'https://fireworks.ai/pricing#serverless-pricing', 'groq': 'https://groq.com/pricing'}
 ```
 ![Task 1 Result](./images/task_1.png)
 ## Task 2
