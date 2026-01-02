@@ -587,17 +587,8 @@ class ChatSession:
             else:
                 break
 
-        # Extract data from each scraped content
-        if self.data_extractor and scraped_contents:
-            for scraped in scraped_contents:
-                await self.data_extractor.extract_and_store_data(
-                    query,
-                    scraped['content'],
-                    scraped['args'].get('url', '') if isinstance(
-                        scraped['args'], dict) else ''
-                )
-        # If no scraped contents but scrape_websites was called, check for existing files
-        elif self.data_extractor and 'scrape' in query.lower():
+        # Always use markdown files for data extraction when scraping is involved
+        if self.data_extractor and 'scrape' in query.lower():
             logger.info("Checking for existing scraped content files...")
             scraped_dir = Path(__file__).parent.parent / "scraped_content"
             if scraped_dir.exists():
@@ -673,7 +664,7 @@ class ChatSession:
             except Exception as e:
                 print(f"\nError: {str(e)}")
 
-    async def show_stored_data(self, limit: int = 5) -> None:
+    async def show_stored_data(self, limit: int | None = 5) -> None:
         """Show recently stored data."""
         if not self.sqlite_server:
             logger.info("No database available")
