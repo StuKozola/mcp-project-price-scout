@@ -554,41 +554,11 @@ class ChatSession:
 
     async def process_query(self, query: str) -> None:
         """Process a user query and extract/store relevant data."""
-        # Check if this is a comparison/analysis query that should use stored data
-        comparison_keywords = ['compare', 'comparison', 'versus',
-                               'vs', 'difference', 'between', 'analyze', 'analysis']
-        is_comparison = any(keyword in query.lower()
-                            for keyword in comparison_keywords)
-
-        # Determine which tools to provide based on query type
-        tools_to_use = self.available_tools
-
-        if is_comparison and self.sqlite_server:
-            # For comparisons, first check if we have stored data
-            try:
-                check_query = "SELECT COUNT(*) as count FROM pricing_plans"
-                result = await self.sqlite_server.execute_tool("read_query", {"query": check_query})
-
-                if result and result.content:
-                    result_text = result.content[0].text
-                    data_count = ast.literal_eval(result_text)[0]['count']
-
-                    if data_count > 0:
-                        # We have data - exclude scraping tools, only provide SQLite read tools
-                        tools_to_use = [tool for tool in self.available_tools
-                                        if 'read_query' in tool['name'] or
-                                        'read' in tool['name'].lower() and 'fetch' not in tool['name'].lower()]
-                        logger.info(
-                            f"Comparison query detected with {data_count} stored records. Using database tools only.")
-            except Exception as e:
-                logger.warning(
-                    f"Could not check stored data: {e}. Proceeding with all tools.")
-
         messages: List[MessageParam] = [{'role': 'user', 'content': query}]
         response = self.anthropic.messages.create(
             max_tokens=2024,
             model='claude-sonnet-4-5-20250929',
-            tools=tools_to_use,
+            tools=self.available_tools,
             messages=messages
         )
 
@@ -662,8 +632,7 @@ class ChatSession:
             else:
                 break
 
-        # Only extract and store data if this is NOT a comparison query
-        if self.data_extractor and full_response.strip() and not is_comparison:
+        if self.data_extractor and full_response.strip():
             await self.data_extractor.extract_and_store_data(query, full_response.strip(), source_url or "")
 
     def _extract_url_from_result(self, result_text: str) -> str | None:
